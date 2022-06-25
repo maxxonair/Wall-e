@@ -51,7 +51,6 @@
 // Time of Flight Sensor 
 #include "Adafruit_VL53L0X.h"
 // IMU MPU6050
-#include <MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
 #include "StringSplitter.h"
@@ -94,7 +93,7 @@
  /*
  * Telemetry loop Frequency [Hz]
  */
- int TM_LOOP_FREQUENCY_Hz    = 100;
+ int TM_LOOP_FREQUENCY_Hz    = 500;
 
  int TM_PUBLISH_FREQUENCY_HZ =  10;
 
@@ -156,8 +155,19 @@ String TC_SET_VEHICLE_MODE              = "SET_VEHICLE_MODE";
 String TC_BROADCAST_DIST                = "SET_BROADCAST_DIST";
 String TC_SET_AUTO_PACE                 = "SET_AUTO_PACE";
 String TC_ENABLE_TM                     = "SET_ENABLE_TM";
+String TC_POINT_TURN                    = "SET_PT";
+String TC_GO_FORWARD                    = "SET_GO_FORWARD";
 
 TaskHandle_t TelemetryTask;
+
+/*
+ * Maximum allowable point turn duration when commanded via TC [ms]
+ */
+const int MAX_PT_DURATION = 2000;
+/*
+ * Maximum allowable go forwad manoeuver duration when commanded via TC [ms]
+ */
+const int MAX_GF_DURATION = 10000;
 //------------------------------------------------------------------------------
 // Internal Status variables
 /* 
@@ -183,16 +193,15 @@ long timeOffRadio = 0 ;
 long connection_failures        = 0;
 long broker_connection_failures = 0;
 
+int loop_counter_100Hz  = 0;
+int loop_counter_10Hz   = 0;
+
 void manageTelemetry( void * pvParameters );
 
 void setup() {
   // Setup TM serial
   Serial.begin(tm_baud);
   delay(10);
-  
-  Serial.println();
-  Serial.println("RoverOne mk1 init ... ");
-  //publishData("RoverOne mk1 init ... ", MQTT_TOPIC_STATUS);
     
   /* 
    *  Set all the motor control pins to outputs
@@ -263,35 +272,49 @@ void setup() {
      */
     client.loop();
   }
-
-  // INIT MPU6050
-  if ( enableIMU && !isSkipSensorInit ){
-    Serial.println("INIT: IMU Sensor MPU6050 ...");
-    //publishData("INIT: IMU Sensor MPU6050 ...",MQTT_TOPIC_STATUS);
-    // initialize device
-    mpu.initialize();
-    //mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
-    //mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-    //mpu.setFilterBandwidth(MPU6050_BAND_184_HZ);
-    /*
-    if ( !mpu.begin() ) {
-      Serial.println("Failed to find MPU6050");
-    }
-    */
-  Serial.println(">> MPU6050 Sensor Online.");
-  }
   
+  publishData(String("[Wall-e][TM] Switching ON."), MQTT_TOPIC_STATUS);
+  publishData(String("[Wall-e][TM][INIT] Wifi and MQTT connceted."), MQTT_TOPIC_STATUS);
+  publishData(String("[Wall-e][TM][INIT] Start module initialization:"), MQTT_TOPIC_STATUS);
+  
+  /* 
+   *  INIT MPU-6050 Inertial Measurement Unit
+   */
+  if ( enableIMU && !isSkipSensorInit )
+  {
+    publishData(String("[Wall-e][TM][IMU] IMU Initialization. Don't Move the rover."), MQTT_TOPIC_STATUS);
+    int imu_status;
+    if ( initIMU() ){
+      
+      publishData(String("[Wall-e][TM][IMU] IMU Initialization failed."), MQTT_TOPIC_STATUS);
+      
+    } else {
+      
+      publishData(String("[Wall-e][TM][IMU] IMU Initialization and Calibration completed."), MQTT_TOPIC_STATUS);
+      /*
+       * Publish IMU calibration results 
+       */
+      //publishData(String("[Wall-e][TM][IMU] Acceleration Offsets : "+String(ax_offset)+" "+String(ay_offset)+" "+String(az_offset)), MQTT_TOPIC_STATUS);
+      publishData(String("[Wall-e][TM][IMU] Gyro Offsets [rad/s]: "+String(off_gx)+" "+String(off_gy)+" "+String(off_gz)), MQTT_TOPIC_STATUS);
+      
+    }
+
+    delay(10);
+
+  }
+
+
   // INIT VL53L0X 
   if (enableDistFront && !isSkipSensorInit){
       // all reset
+    publishData(String("[Wall-e][TM][VL53L0X] VL53L0X Front Initialization."), MQTT_TOPIC_STATUS);
     digitalWrite(SHUT_VL, LOW);    
     delay(10);
     // all unreset
     digitalWrite(SHUT_VL, HIGH);
     delay(10);
-    Serial.println("INIT: Front Distance Sensor VL53L0X ...");
     if (!vl53lox.begin(LOX1_ADDRESS)) {
-      Serial.println(F("Failed to boot VL53L0X"));
+      publishData(String("[Wall-e][TM][VL53L0X] Failed to initialize."), MQTT_TOPIC_STATUS);
     }
     Serial.println(">> VL53L0X Sensor Online."); 
   } else if (enableDistFront) {
@@ -301,6 +324,7 @@ void setup() {
   // INIT NRF24
   if (enableRadio) {
     Serial.println("INIT: NRF24");
+    publishData(String("[Wall-e][TM][NRF24] Initialize NRF24 radio transmitter/receiver."), MQTT_TOPIC_STATUS);
     radio.begin();
     
     //set the address
@@ -313,12 +337,12 @@ void setup() {
   /*
    * From here onwards publishData can be used
    */
-  publishData(String("[Wall-e][TM] Switching ON."), MQTT_TOPIC_STATUS);
   publishData(String("[Wall-e][TM] Execute come to life routine."), MQTT_TOPIC_STATUS);
 
   /*
    * Setup Telemetry on the seconds core 
    */
+   publishData(String("[Wall-e][TM][INIT] Setup telemetry on second core."), MQTT_TOPIC_STATUS);
    xTaskCreatePinnedToCore(
                     manageTelemetry,        /* Task function. */
                     "manageTelemetry",      /* name of task. */
@@ -331,7 +355,7 @@ void setup() {
   delay(50);
   
   // Come to life routine
-  Serial.println(" >> Execute come to life routine.");
+  publishData(String("[Wall-e][TM][INIT] Execute come to life routine."), MQTT_TOPIC_STATUS);
   /*
    * Quick shake to signal:
    * (a) Automotive functions are operational  
@@ -353,9 +377,7 @@ void setup() {
 
   long timeOffRadio = 0 ; 
 
-  publishData(String("[Wall-e][TM] ... Initialization complete!"), MQTT_TOPIC_STATUS);
-  Serial.println("... Initialization complete!");
-  Serial.println();
+  publishData(String("[Wall-e][TM][INIT] > Initialization complete <"), MQTT_TOPIC_STATUS);
 }
 
 void loop() {
@@ -445,7 +467,7 @@ void loop() {
             
             if ( telemetry.frontDistance < turnDist && telemetry.frontDistance != -1 ) //|| abs(fVelocity) < turnVel && fVelocity != -1 ) 
             {
-                performPointTurn();              
+                performRandomPointTurn();              
             } else {
               ctrlAllWheel_Forward( autoDrivingPace );
             }
@@ -682,6 +704,32 @@ void processTelecommand( String Parameter, String Value ){
       publishData( String("[Wall-e][TM] Setting Enable Telemetry broadcast: "+Value), MQTT_TOPIC_STATUS );
     } 
   }
+  else if ( Parameter == TC_POINT_TURN )
+  {
+    int pt_duration_ms = Value.toInt();
+    if ( pt_duration_ms > 0 || pt_duration_ms < MAX_PT_DURATION )
+    {
+      publishData( String("[Wall-e][TM] Perform point turn clockwise duration: "+Value+" [ms]"), MQTT_TOPIC_STATUS );
+      performPointTurn(pt_duration_ms);
+    } 
+    else
+    {
+      publishData( String("[Wall-e][TM] Point turn duration outside limits. Rejecting"), MQTT_TOPIC_STATUS );
+    }
+  }
+  else if ( Parameter == TC_GO_FORWARD )
+  {
+    int go_forward_ms = Value.toInt();
+    if ( go_forward_ms > 0 || go_forward_ms < MAX_GF_DURATION )
+    {
+      publishData( String("[Wall-e][TM] Go forward for: "+Value+" [ms]"), MQTT_TOPIC_STATUS );
+      performGoForward(go_forward_ms);
+    } 
+    else
+    {
+      publishData( String("[Wall-e][TM] Go forward duration outside limits. Rejecting"), MQTT_TOPIC_STATUS );
+    }
+  }
   else
   {
     publishData( String("[Wall-e][TM] TC not valid. Rejecting. "), MQTT_TOPIC_STATUS );
@@ -713,14 +761,17 @@ void callback(char* topic, byte* message, unsigned int length) {
 String serializeTelemetry(){
   String TM = "";
   String dm = ";";
-  TM = "[TM]"+dm+String(telemetry.clockTime)+dm+String(telemetry.drivingMode)+dm+String(telemetry.pointTurnStatus)
-  +dm+String(telemetry.frontDistance)+dm+String(telemetry.imuData.temperature)
-  +dm+String(telemetry.imuData.ax)+dm+String(telemetry.imuData.ay)+dm+String(telemetry.imuData.az)
-  +dm+String(telemetry.imuData.gx)+dm+String(telemetry.imuData.gy)+dm+String(telemetry.imuData.gz)
-  +dm+String(telemetry.statusWheel_A.isForward)+dm+String(telemetry.statusWheel_A.isStop)+dm+String(telemetry.statusWheel_A.pace) 
-  +dm+String(telemetry.statusWheel_B.isForward)+dm+String(telemetry.statusWheel_B.isStop)+dm+String(telemetry.statusWheel_B.pace) 
-  +dm+String(telemetry.statusWheel_C.isForward)+dm+String(telemetry.statusWheel_C.isStop)+dm+String(telemetry.statusWheel_C.pace) 
-  +dm+String(telemetry.statusWheel_D.isForward)+dm+String(telemetry.statusWheel_D.isStop)+dm+String(telemetry.statusWheel_D.pace) ;
+  TM = "[TM]"
+  //+dm+String(telemetry.clockTime)+dm+String(telemetry.drivingMode)+dm+String(telemetry.pointTurnStatus)
+  //+dm+String(telemetry.frontDistance)+dm+String(telemetry.imuData.temperature)
+  //+dm+String(telemetry.imuData.ax)+dm+String(telemetry.imuData.ay)+dm+String(telemetry.imuData.az)
+  //+dm+String(telemetry.imuData.gx)+dm+String(telemetry.imuData.gy)+dm+String(telemetry.imuData.gz)
+  +dm+String(telemetry.imuData.euler_ypr[0],3)+dm+String(telemetry.imuData.euler_ypr[1])+dm+String(telemetry.imuData.euler_ypr[2])
+  // +dm+String(telemetry.statusWheel_A.isForward)+dm+String(telemetry.statusWheel_A.isStop)+dm+String(telemetry.statusWheel_A.pace) 
+  // +dm+String(telemetry.statusWheel_B.isForward)+dm+String(telemetry.statusWheel_B.isStop)+dm+String(telemetry.statusWheel_B.pace) 
+  // +dm+String(telemetry.statusWheel_C.isForward)+dm+String(telemetry.statusWheel_C.isStop)+dm+String(telemetry.statusWheel_C.pace) 
+  // +dm+String(telemetry.statusWheel_D.isForward)+dm+String(telemetry.statusWheel_D.isStop)+dm+String(telemetry.statusWheel_D.pace) ;
+  ;
   return TM;
 }
 
@@ -736,49 +787,58 @@ void manageTelemetry( void * pvParameters ){
   /*
    * Loop TM loop forever 
    */
-  int step_until_publish = int (TM_LOOP_FREQUENCY_Hz / TM_PUBLISH_FREQUENCY_HZ);
-  int step_counter       = 0;
+  int frontDistance = -1;
+  double fVelocity  = -1;
   for(;;)
   {
       telemetry.clockTime = telemetry.clockTime + 1;
       
       /*
-       * Collect IMU measurements
+       * Create Pings
        */
-      ImuData imuData = measImu();
+      int ping_100_Hz = createTmPing_100Hz();
+      int ping_10Hz   = createTmPing_10Hz();
       
-      int frontDistance = -1;
-      double fVelocity  = -1;
       /*
-       * Collect Front laser distance measurement
+       * Collect IMU measurements
+       * Runs at full TM frequency 
        */
-      if( enableDistFront )
+      ImuData imuData = updateImuMeasurement();
+
+      /*
+       * 10 Hz functions 
+       */
+      if ( ping_10Hz == 1 )
       {
-        frontDistance = measFrontDistance();
-        frontDistanceTime = millis();
-        fVelocity = frontVelocity( frontDistance,  prevMeasurement,  frontDistanceTime,  prevMeasurementTime);
-        char dataString[8];
-        dtostrf(frontDistance, 1, 2, dataString);
-        telemetry.frontDistance = frontDistance ;
-        if ( isBroadcastDistance )
+        /*
+         * Collect Front laser distance measurement
+         */
+        if( enableDistFront )
         {
-          publishData(dataString, MQTT_TOPIC_DISTANCE);
+          frontDistance = measFrontDistance();
+          frontDistanceTime = millis();
+          fVelocity = frontVelocity( frontDistance,  prevMeasurement,  frontDistanceTime,  prevMeasurementTime);
+          char dataString[8];
+          dtostrf(frontDistance, 1, 2, dataString);
+          telemetry.frontDistance = frontDistance ;
+          if ( isBroadcastDistance )
+          {
+            publishData(dataString, MQTT_TOPIC_DISTANCE);
+          }
+        }
+      
+        if( enablePublishTelemetry )
+        {
+          /*
+           * Publish telemetry to MQTT channel 
+           */
+          publishTelemetry();
         }
       }
-    
-    if( enablePublishTelemetry && step_counter >= step_until_publish )
-    {
-      /*
-       * Publish telemetry to MQTT channel 
-       */
-      publishTelemetry();
-      step_counter = 0;
-    }
-
     // For front sensor based velocity estimation
-    prevMeasurement     = frontDistance; 
-    prevMeasurementTime = frontDistanceTime;
-    step_counter = step_counter + 1;
+    prevMeasurement       = frontDistance; 
+    prevMeasurementTime   = frontDistanceTime;
+
     delay(int( 1/TM_LOOP_FREQUENCY_Hz * 1000 ));
   }
 }
@@ -818,7 +878,7 @@ void publishTelemetry(){
 /*
  * Execute point turn with random angle and direction
  */
-void performPointTurn( ){
+void performRandomPointTurn( ){
     telemetry.pointTurnStatus = telemetry.PT_EXECUTING;
     // Publish maneuver 
     publishData( String("[Wall-e][TM] Init point turn. "), MQTT_TOPIC_STATUS);
@@ -836,4 +896,82 @@ void performPointTurn( ){
     ctrlAllWheel_Stop();
     delay(20);
     telemetry.pointTurnStatus = telemetry.PT_COMPLETED;
+}
+
+/*
+ * Perform counterclockwise turn for turn_dur_ms milli seconds
+ * Pace: autoDrivingPace
+ */
+void performPointTurn( int turn_dur_ms ){
+    telemetry.pointTurnStatus = telemetry.PT_EXECUTING;
+    // Publish maneuver 
+    publishData( String("[Wall-e][TM] Init point turn. "), MQTT_TOPIC_STATUS);
+    
+    /*
+     * All wheel stop
+     */
+    ctrlAllWheel_Stop();
+    /*
+     * Rotate counterclockwise 
+     */
+    ctrlAllWheel_RotateLeftward(autoDrivingPace);
+    delay(turn_dur_ms);
+    /*
+     * All Wheels Stop
+     */
+    ctrlAllWheel_Stop();
+    
+    delay(20);
+    telemetry.pointTurnStatus = telemetry.PT_COMPLETED;
+}
+
+/*
+ * Command manoevuer go forward in straight line for go_dur_ms [ms]
+ * Pace: autoDrivingPace
+ */
+void performGoForward( int go_dur_ms ){
+    
+    /*
+     * All wheel stop
+     */
+    ctrlAllWheel_Stop();
+    /*
+     * Rotate counterclockwise 
+     */
+    ctrlAllWheel_Forward( autoDrivingPace );
+    delay(go_dur_ms);
+    /*
+     * All Wheels Stop
+     */
+    ctrlAllWheel_Stop();
+    
+    delay(20);
+}
+
+/*
+ * Create 100 Hz ping for the telemetry loop on the second core 
+ */
+int createTmPing_100Hz(){
+  if( loop_counter_100Hz == int( TM_LOOP_FREQUENCY_Hz / 100 ) ){
+    loop_counter_100Hz = 0;
+    return 1;
+  } else 
+  {
+    loop_counter_100Hz = loop_counter_100Hz + 1;
+    return 0;
+  }
+}
+
+/*
+ * Create 10 Hz ping for the telemetry loop on the second core 
+ */
+int createTmPing_10Hz(){
+  if( loop_counter_10Hz == int( TM_LOOP_FREQUENCY_Hz / 10 ) ){
+    loop_counter_10Hz = 0;
+    return 1;
+  } else 
+  {
+    loop_counter_10Hz = loop_counter_10Hz + 1;
+    return 0;
+  }
 }

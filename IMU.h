@@ -1,113 +1,183 @@
-//#include <MPU6050.h>
+#ifndef IMU_H
+
+#define IMU_H
+
+/* Arduino library includes */ 
+#include <Adafruit_MPU6050.h>
+
+/* Project specific includes */
+#include "roverData.h" 
 //------------------------------------------------------------------------------
-// MPU6050
-MPU6050 mpu;
+/* 
+ *  @brief: MPU-6050 Inertial Measurement Unit interface functions 
+ *  
+ *  @description: TODO
+ *  
+ */
+Adafruit_MPU6050 mpu;
+Adafruit_Sensor *mpu_temp, *mpu_accel, *mpu_gyro;
 
-int buffersize=1000;     //Amount of readings used to average, make it higher to get more precision but sketch will be slower  (default:1000)
-int acel_deadzone=8;     //Acelerometer error allowed, make it lower to get more precision, but sketch may not converge  (default:8)
-int giro_deadzone=1;     //Giro error allowed, make it lower to get more precision, but sketch may not converge  (default:1)
+#define PI 3.14159265359
 
-int16_t ax, ay, az,gx, gy, gz;
+double mean_gx = 0;
+double mean_gy = 0;
+double mean_gz = 0;
 
-int mean_ax,mean_ay,mean_az,mean_gx,mean_gy,mean_gz,state=0;
-int ax_offset,ay_offset,az_offset,gx_offset,gy_offset,gz_offset;
+double off_gx = 0;
+double off_gy = 0;
+double off_gz = 0;
 
 /*
- * Function: Take buffersize measurements and average them for calibration
+ * Gyro calibration buffer size:
+ * Number of static IMU measurements taken to determine 
+ * the static measurement offsets
  */
-void meansensors(){
-  long i=0,buff_ax=0,buff_ay=0,buff_az=0,buff_gx=0,buff_gy=0,buff_gz=0;
-
-  while (i<(buffersize+101)){
-    // read raw accel/gyro measurements from device
-    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-    
-    if (i>100 && i<=(buffersize+100)){ //First 100 measures are discarded
-      buff_ax=buff_ax+ax;
-      buff_ay=buff_ay+ay;
-      buff_az=buff_az+az;
-      buff_gx=buff_gx+gx;
-      buff_gy=buff_gy+gy;
-      buff_gz=buff_gz+gz;
-    }
-    if (i==(buffersize+100)){
-      mean_ax=buff_ax/buffersize;
-      mean_ay=buff_ay/buffersize;
-      mean_az=buff_az/buffersize;
-      mean_gx=buff_gx/buffersize;
-      mean_gy=buff_gy/buffersize;
-      mean_gz=buff_gz/buffersize;
-    }
-    i++;
-    delay(2); //Needed so we don't get repeated measures
-  }
-}
+int GYRO_CALIB_BUFFER_SIZE = 1000;
 
 /*
- * Run IMU calibration to compute acceleration and gyro offsets
+ * IMU init status flag constants 
  */
-void calibration(){
-  ax_offset=-mean_ax/8;
-  ay_offset=-mean_ay/8;
-  az_offset=(16384-mean_az)/8;
+int IMU_INIT_SUCCESS = 0;
+int IMU_INIT_FAILURE = 1; 
+/*
+ * Maximum attempts to init MPU
+ * If threshold is reached -> giving up 
+ */
+int MAX_INIT_ATTEMPTS = 10;
 
-  gx_offset=-mean_gx/4;
-  gy_offset=-mean_gy/4;
-  gz_offset=-mean_gz/4;
-  while (1){
-    int ready=0;
-    mpu.setXAccelOffset(ax_offset);
-    mpu.setYAccelOffset(ay_offset);
-    mpu.setZAccelOffset(az_offset);
+void calibrateGyro(){
+  int i;
+  int bufferSize = 1000;
+  
+  sensors_event_t gyro;
+  for(i=0;i<GYRO_CALIB_BUFFER_SIZE;i++)
+  {
+      mpu_gyro->getEvent(&gyro);
 
-    mpu.setXGyroOffset(gx_offset);
-    mpu.setYGyroOffset(gy_offset);
-    mpu.setZGyroOffset(gz_offset);
+      mean_gx = mean_gx + gyro.gyro.x;
+      mean_gy = mean_gy + gyro.gyro.y;
+      mean_gz = mean_gz + gyro.gyro.z;
 
-    meansensors();
-    Serial.println("...");
-
-    if (abs(mean_ax)<=acel_deadzone) ready++;
-    else ax_offset=ax_offset-mean_ax/acel_deadzone;
-
-    if (abs(mean_ay)<=acel_deadzone) ready++;
-    else ay_offset=ay_offset-mean_ay/acel_deadzone;
-
-    if (abs(16384-mean_az)<=acel_deadzone) ready++;
-    else az_offset=az_offset+(16384-mean_az)/acel_deadzone;
-
-    if (abs(mean_gx)<=giro_deadzone) ready++;
-    else gx_offset=gx_offset-mean_gx/(giro_deadzone+1);
-
-    if (abs(mean_gy)<=giro_deadzone) ready++;
-    else gy_offset=gy_offset-mean_gy/(giro_deadzone+1);
-
-    if (abs(mean_gz)<=giro_deadzone) ready++;
-    else gz_offset=gz_offset-mean_gz/(giro_deadzone+1);
-
-    if (ready==6) break;
+      delay(2);
   }
+
+  /*
+   * Finalize mean gyro measurements per axis 
+   */
+  mean_gx = double( mean_gx / GYRO_CALIB_BUFFER_SIZE );
+  mean_gy = double( mean_gy / GYRO_CALIB_BUFFER_SIZE );
+  mean_gz = double( mean_gz / GYRO_CALIB_BUFFER_SIZE );
+
+  /*
+   * Generate axis offsets 
+   */
+  off_gx = - mean_gx ;
+  off_gy = - mean_gy ;
+  off_gz = - mean_gz ;
 }
 
-ImuData measImu(){
+double rad2deg(double angle_rad){
+  return (angle_rad * 180 / PI );
+}
+
+double deg2rad(double angle_deg){
+  return (angle_deg * PI / 180);
+}
+
+int initIMU(){
+  int loop_counter = 0 ; 
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      delay(10);
+      if ( loop_counter == MAX_INIT_ATTEMPTS ) 
+      {
+        return IMU_INIT_FAILURE;
+      }
+      loop_counter = loop_counter + 1;
+    }
+  }
+
+  mpu_temp = mpu.getTemperatureSensor();
+  //mpu_temp->printSensorDetails();
+
+  mpu_accel = mpu.getAccelerometerSensor();
+  //mpu_accel->printSensorDetails();
+
+  mpu_gyro = mpu.getGyroSensor();
+  //mpu_gyro->printSensorDetails();
+
+  /*
+   * MPU-6050 Settings
+   */
+  //mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+  //mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+  //mpu.setFilterBandwidth(MPU6050_BAND_184_HZ);
+
+  /*
+   * Determine static gyro measurement offsets for each axis
+   */
+  calibrateGyro();
+
+  return IMU_INIT_SUCCESS;
+}
+
+ImuData updateImuMeasurement(){
   ImuData imuData;
-  int16_t ax, ay, az,gx, gy, gz;
-  
-  sensors_event_t a, g, temp;
-  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  sensors_event_t accel;
+  sensors_event_t gyro;
+  sensors_event_t temp;
+  mpu_temp->getEvent(&temp);
+  mpu_accel->getEvent(&accel);
+  mpu_gyro->getEvent(&gyro);
 
+  /*
+   * Update measurement time related parameters
+   */
+  long prev_timeTag = imuData.timeTag;
+  int ii = 0;
   imuData.timeTag = millis();
-  
-  imuData.ax = ax;
-  imuData.ay = ay;
-  imuData.az = az;
+  imuData.delta_time_ms = imuData.timeTag - prev_timeTag ;
 
-  imuData.gx = gx;
-  imuData.gy = gy;
-  imuData.gz = gz;
+  /*
+   * Update linear acceleration measurements 
+   * @Unit [m/s2]
+   */
+  imuData.ax = accel.acceleration.x;
+  imuData.ay = accel.acceleration.y;
+  imuData.az = accel.acceleration.z;
 
+  /*
+   * Update angular velocity 
+   * * @Unit [rad/s]
+   */
+  imuData.gx = gyro.gyro.x + off_gx;
+  imuData.gy = gyro.gyro.y + off_gy;
+  imuData.gz = gyro.gyro.z + off_gz;
+
+  /*
+   * Update angle delta since last measurement
+   */
+  imuData.delta_axis_angle_rad[0] = gyro.gyro.x * double( double(imuData.delta_time_ms) / 1000 );
+  imuData.delta_axis_angle_rad[1] = gyro.gyro.y * double( double(imuData.delta_time_ms) / 1000 );
+  imuData.delta_axis_angle_rad[2] = gyro.gyro.z * double( double(imuData.delta_time_ms) / 1000 );
+
+  /*
+   * Update Euler Angles Yaw Pitch Roll
+   */
+  for (ii=0;ii<3;ii++)
+  {
+    imuData.euler_ypr[ii] = double( double(imuData.euler_ypr[ii]) + rad2deg( double(imuData.delta_axis_angle_rad[ii]) ) );
+  }
+
+  /*
+   * Update temperature measure 
+   * @Unit [deg Celsius]
+   */
   imuData.temperature = temp.temperature;
 
   telemetry.imuData = imuData;
   return imuData;
 }
+
+#endif

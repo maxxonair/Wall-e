@@ -1,3 +1,6 @@
+#ifndef ROVER_DATA_H
+
+#define ROVER_DATA_H
 
 struct WheelStatus
 {
@@ -26,10 +29,15 @@ struct ImuData
   double gz               = 0 ;
   double temperature      = 0 ;
 
-  //VectorFloat gravity;    // [x, y, z]            gravity vector
-  //Quaternion q;           // [w, x, y, z]         quaternion container
-  float euler[3];         // [psi, theta, phi]    Euler angle container
-  float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+  /*
+   * Time delta wrt to previous IMU measurement [ms]
+   */
+  unsigned long delta_time_ms    = 0;
+  
+  double delta_axis_angle_rad[3];
+
+  double DCM_Grf2Vbf[3][3] ;       // Direct cosine matrix Global reference frame to vehicle body frame 
+  double euler_ypr[3];             // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
   int ax_offset,ay_offset,az_offset,gx_offset,gy_offset,gz_offset;
 };
@@ -54,3 +62,5 @@ struct Telemetry
   WheelStatus statusWheel_C;
   WheelStatus statusWheel_D;
 };
+
+#endif
