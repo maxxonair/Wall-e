@@ -1,4 +1,12 @@
 
+#ifndef ROVER_MOTOR_CONTROL_H
+
+#define ROVER_MOTOR_CONTROL_H
+
+#include "roverData.h"
+#include "roverPublish.h"
+#include "roverImu.h"
+
 //------------------------------------------------------------------------------
 const int emptyPin = 34;
 // Motor A
@@ -336,3 +344,199 @@ void demoAllWheels(){
   ctrlWheel_D(CMD_STOP , 255);
    delay(1000);
 }
+
+void shake(float frequency, float t){
+  // period in s
+  float period = 1/frequency;
+  
+  // Number of cycles
+  int cycles = (int) (t/period);
+  
+    for (int ii = 1; ii < cycles ; ii++){   
+  
+    ctrlAllWheel_Forward(150);
+    delay(period/3*1000);
+    ctrlAllWheel_Stop();
+    delay(period/3*1000);
+    ctrlAllWheel_Reverse(150);;
+    delay(period/3*1000);
+    
+  }
+
+}
+
+void comeToLifeRoutine(){
+  // Shake 30 Hz for 2 seconds
+  shake(40,1.5);
+}
+
+/*
+ * Execute point turn with random angle and direction
+ */
+void performRandomPointTurn( ){
+    telemetry.pointTurnStatus = telemetry.PT_EXECUTING;
+    // Publish maneuver 
+    publishData( String("[Wall-e][TM] Init point turn. "), MQTT_TOPIC_STATUS);
+    
+    // Perform turn maneuver:
+    ctrlAllWheel_Stop();
+    ctrlAllWheel_Reverse(autoDrivingPace);
+    delay(700);
+    if (random(0,1000) > 230) {
+      ctrlAllWheel_RotateRightward(autoDrivingPace);
+    } else {
+      ctrlAllWheel_RotateLeftward(autoDrivingPace);
+    }
+    delay(random(350,650));
+    ctrlAllWheel_Stop();
+    delay(20);
+    telemetry.pointTurnStatus = telemetry.PT_COMPLETED;
+}
+
+/*
+ * Perform turn for turn_dur_ms milli seconds
+ * Pace: autoDrivingPace
+ */
+void performPointTurn( int directionIndex, int turn_dur_ms ){
+    telemetry.pointTurnStatus = telemetry.PT_EXECUTING;
+    // Publish maneuver 
+    publishData( String("[Wall-e][TM] Init point turn. "), MQTT_TOPIC_STATUS);
+    
+    /*
+     * All wheel stop
+     */
+    ctrlAllWheel_Stop();
+    /*
+     * Rotate counterclockwise 
+     */
+     if ( directionIndex == 0 )
+     {
+      ctrlAllWheel_RotateRightward(autoDrivingPace);
+     } 
+     else if ( directionIndex == 1 )
+     {
+      ctrlAllWheel_RotateLeftward(autoDrivingPace);
+     }
+    
+    delay(turn_dur_ms);
+    /*
+     * All Wheels Stop
+     */
+    ctrlAllWheel_Stop();
+    
+    delay(20);
+    telemetry.pointTurnStatus = telemetry.PT_COMPLETED;
+}
+
+/*
+ * Command manoevuer go forward in straight line for go_dur_ms [ms]
+ * Pace: autoDrivingPace
+ */
+void performGoForward( int go_dur_ms ){
+    
+    /*
+     * All wheel stop
+     */
+    ctrlAllWheel_Stop();
+    /*
+     * Rotate counterclockwise 
+     */
+    ctrlAllWheel_Forward( autoDrivingPace );
+    delay(go_dur_ms);
+    /*
+     * All Wheels Stop
+     */
+    ctrlAllWheel_Stop();
+    
+    delay(20);
+}
+
+/*
+ * Command manoevuer go reverse in straight line for go_dur_ms [ms]
+ * Pace: autoDrivingPace
+ */
+void performGoReverse( int go_dur_ms ){
+    
+    /*
+     * All wheel stop
+     */
+    ctrlAllWheel_Stop();
+    /*
+     * Rotate counterclockwise 
+     */
+    ctrlAllWheel_Reverse( autoDrivingPace );
+    delay(go_dur_ms);
+    /*
+     * All Wheels Stop
+     */
+    ctrlAllWheel_Stop();
+    
+    delay(20);
+}
+
+/*
+ * Command manoevuer go point turn in ControlDrive mode for delta_rotation [deg]
+ * Pace: controller commanded pace 
+ */
+int performCtPointTurn( int delta_rotation ){
+    int ctrl_error = 0;
+    int abs_ctrl_error=0;
+    int delay_dt = 100;
+    int turn_pace_cmd ;
+    /* Target accuracy treshold [deg] */
+    int target_thr      =   4;
+    int max_attempts    = 100;
+    int attempt_counter =   0;
+    /* assign start heading */
+    CT_heading_start = imuData.euler_ypr_deg.yaw;
+    /*
+     * All wheel stop
+     */
+    ctrlAllWheel_Stop();
+    /* Reset heading controller */
+    ctrl_reset(heading_ctrl);
+    /* Set start ctrl error */
+    abs_ctrl_error = ( imuData.euler_ypr_deg.yaw - delta_rotation );
+    
+    while ( abs_ctrl_error > target_thr && attempt_counter < max_attempts )
+    {
+      /*
+       * Rotate clockwise 
+       */
+      /* compute controller error */
+      ctrl_error = ( imuData.euler_ypr_deg.yaw - delta_rotation );
+      abs_ctrl_error = abs( ctrl_error );
+      
+      turn_pace_cmd = int( ctrl_update( abs_ctrl_error, (delay_dt/1000), heading_ctrl) );
+
+      if ( ctrl_error > 0 ){
+        ctrlAllWheel_RotateLeftward(turn_pace_cmd); 
+      } 
+      else 
+      {
+        ctrlAllWheel_RotateRightward(turn_pace_cmd);
+      }
+      
+
+      attempt_counter = attempt_counter +1;
+      delay(delay_dt);
+    }
+
+
+    /*
+     * All Wheels Stop
+     */
+    ctrlAllWheel_Stop();
+    
+    delay(20);
+
+    if (ctrl_error > target_thr)
+    {
+      return 0;
+    } else 
+    {
+      return 1;
+    }
+}
+
+#endif

@@ -1,3 +1,8 @@
+
+#ifndef ROVER_JOYSTICK_CONTROL_H
+
+#define ROVER_JOYSTICK_CONTROL_H
+
 #include "RF24.h"
 #include <nRF24L01.h>
 
@@ -63,3 +68,5 @@ void enableJoystickCtrl(RF24 radio){
             //  Serial.print(".");
           } 
 }
+
+#endif
