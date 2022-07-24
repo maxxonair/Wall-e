@@ -115,6 +115,13 @@ const int MAX_PT_DURATION = 2000;
  * Maximum allowable go forwad manoeuver duration when commanded via TC [ms]
  */
 const int MAX_GF_DURATION = 10000;
+
+/*
+ * Wheel drive commands
+ */
+const int WHEEL_DRIVE_FORWARD = 1;
+const int WHEEL_DRIVE_REVERSE = 2;
+const int WHEEL_DRIVE_STOP    = 0;
 //------------------------------------------------------------------------------
 // >> Internal Status variables
 //------------------------------------------------------------------------------
@@ -137,6 +144,13 @@ int autoDrivingPace = 90;
  * ControlDrive Point turn heading start val
  */
 int CT_heading_start = 0;
+
+/*
+ * Flag: Is rover stationary
+ * 1 - rover is stationary
+ * 0 - rover is moving 
+ */
+int isRoverStationary = 1;
 
 /* 
  *  Time since radio is without contact
@@ -304,6 +318,7 @@ struct Telemetry
   WheelStatus statusWheel_B;
   WheelStatus statusWheel_C;
   WheelStatus statusWheel_D;
+  int isRoverStationary;
 };
 
 /*

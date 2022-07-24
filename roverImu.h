@@ -63,6 +63,14 @@ uint8_t fifoBuffer[64];
 float acc_factor  = 4;
 float gyro_factor = 250;
 
+/* Indices to store raw acc/gyro data */
+const int iAx = 0;
+const int iAy = 1;
+const int iAz = 2;
+const int iGx = 3;
+const int iGy = 4;
+const int iGz = 5;
+
 /* 
  *  Orientation/motion vars
  *  Temporary containers to get measurements
@@ -106,8 +114,8 @@ int IMU_MEAS_FAILURE = 0;
  * Set number of Acc/Gyro calibration loops
  * 1 loop ~= 100 measurements
  */
-int ACC_CALIBRATION_LOOPS = 10;
-int GYR_CALIBRATION_LOOPS = 10;
+int ACC_CALIBRATION_LOOPS = 5;
+int GYR_CALIBRATION_LOOPS = 5;
 
 // ================================================================
 // ===                    [ INIT ]                              ===
@@ -143,17 +151,22 @@ int initIMU(){
     /* 
      *  supply your own gyro offsets here, scaled for min sensitivity
      */
+     /*
     mpu.setXGyroOffset(220);
     mpu.setYGyroOffset(76);
     mpu.setZGyroOffset(-85);
+    
     mpu.setZAccelOffset(1788); // 1688 factory default for my test chip
-
+    */
+    
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
-        // Calibration: generate offsets and calibrate our MPU6050
+        
         /* Calibrate Accelerometer */
+        publishData( String("[Wall-e][TM] Calibrate Accelerometer. "), MQTT_TOPIC_STATUS);
         mpu.CalibrateAccel(ACC_CALIBRATION_LOOPS);
         /* Calibrate Gyroscopes */
+        publishData( String("[Wall-e][TM] Calibrate Gyros. "), MQTT_TOPIC_STATUS);
         mpu.CalibrateGyro(GYR_CALIBRATION_LOOPS);
         
         mpu.PrintActiveOffsets();
@@ -214,6 +227,7 @@ int initIMU(){
 int updateImuMeasurement(){
   /* Init index for loops */
   int ii = 0 ;
+  int16_t RawValue[6];
   /*
    * If DMP programming failed -> exit on failure 
    */
@@ -309,19 +323,33 @@ int updateImuMeasurement(){
   imuData.euler_ypr_deg.pitch = float( ypr[1] * ( RAD2DEG ));
   imuData.euler_ypr_deg.roll  = float( ypr[2] * ( RAD2DEG ));
   */
-
   
+  mpu.getMotion6(&RawValue[iAx], &RawValue[iAy], &RawValue[iAz], 
+                     &RawValue[iGx], &RawValue[iGy], &RawValue[iGz]);
   /*
    * @brief: Update acceleration vector with removed gravity vector 
    * @frame: IMU frame
    * @unit: m/s2
    */
-  imuData.acc_ms2_IMU.x = float(aaReal.x) / float( MAX_INT_16 * acc_factor );
-  imuData.acc_ms2_IMU.y = float(aaReal.y) / float( MAX_INT_16 * acc_factor );
-  imuData.acc_ms2_IMU.z = float(aaReal.z) / float( MAX_INT_16 * acc_factor );
+  imuData.acc_ms2_IMU.x = float(RawValue[iAx]) / float( MAX_INT_16 * acc_factor );
+  imuData.acc_ms2_IMU.y = float(RawValue[iAy]) / float( MAX_INT_16 * acc_factor );
+  imuData.acc_ms2_IMU.z = float(RawValue[iAz]) / float( MAX_INT_16 * acc_factor );
 
-  imuData.euler_ypr_deg.pitch  = float( asin( aa.x / sqrt( float( aa.x*aa.x + aa.y*aa.y + aa.z*aa.z))) * ( RAD2DEG ));
-  imuData.euler_ypr_deg.roll   = float( atan2(aa.y,aa.z) * ( RAD2DEG ));
+  
+  if ( isRoverStationary ){
+    /*
+     * If rover is stationary -> compute roll/pitch from gravity vector 
+     */
+    imuData.euler_ypr_deg.pitch  = float( asin( imuData.acc_ms2_IMU.x / sqrt( float( imuData.acc_ms2_IMU.x*imuData.acc_ms2_IMU.x 
+                                                                                   + imuData.acc_ms2_IMU.y*imuData.acc_ms2_IMU.y 
+                                                                                   + imuData.acc_ms2_IMU.z*imuData.acc_ms2_IMU.z))) * ( RAD2DEG ));
+    imuData.euler_ypr_deg.roll   = float( atan2(imuData.acc_ms2_IMU.y,imuData.acc_ms2_IMU.z) * ( RAD2DEG ));
+  } else {
+    /*
+     * If rover is moving -> don't update roll/pitch
+     */
+    /* TODO: propagate gyro measurements
+  }
 
   if ( imuData.time_valid == imuData.TIME_VALID )
   {

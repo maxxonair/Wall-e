@@ -370,7 +370,8 @@ String serializeTelemetry(){
   +dm+String(telemetry.statusWheel_A.isForward)+dm+String(telemetry.statusWheel_A.isStop)+dm+String(telemetry.statusWheel_A.pace) 
   +dm+String(telemetry.statusWheel_B.isForward)+dm+String(telemetry.statusWheel_B.isStop)+dm+String(telemetry.statusWheel_B.pace) 
   +dm+String(telemetry.statusWheel_C.isForward)+dm+String(telemetry.statusWheel_C.isStop)+dm+String(telemetry.statusWheel_C.pace) 
-  +dm+String(telemetry.statusWheel_D.isForward)+dm+String(telemetry.statusWheel_D.isStop)+dm+String(telemetry.statusWheel_D.pace) ;
+  +dm+String(telemetry.statusWheel_D.isForward)+dm+String(telemetry.statusWheel_D.isStop)+dm+String(telemetry.statusWheel_D.pace) 
+  +dm+String(telemetry.isRoverStationary);
   ;
   return TM;
 }
@@ -401,6 +402,22 @@ int createTmPing_10Hz(){
     loop_counter_10Hz = loop_counter_10Hz + 1;
     return 0;
   }
+}
+
+void assessRoverStationary(){
+
+  if (    telemetry.statusWheel_A.isStop == true 
+       && telemetry.statusWheel_B.isStop == true
+       && telemetry.statusWheel_C.isStop == true
+       && telemetry.statusWheel_D.isStop == true)
+  {
+    isRoverStationary = 1;
+  }
+  else
+  {
+    isRoverStationary = 0;
+  }
+  telemetry.isRoverStationary = isRoverStationary;
 }
 
 /*
@@ -436,6 +453,13 @@ void manageTelemetry( void * pvParameters ){
        * Runs at full TM frequency 
        */
       imu_meas_success = updateImuMeasurement();
+
+      /*
+       * Assess if the rover is stationary 
+       * based on all four wheel actuator commands
+       * Note: This function does not consult the IMU
+       */
+      assessRoverStationary();
 
       /*
        * 10 Hz functions 

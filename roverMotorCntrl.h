@@ -80,32 +80,27 @@ void updateWheelStatus_D(boolean isForward, boolean isStop,  int pace){
 }
 
 void ctrlWheel_A(int cmd, int wheelSpeed){
-  //boolean isStop    = false;
-  //boolean isForward = false;
   // Set speed 
   ledcWrite(PWMA_Ch, wheelSpeed);
   // Set wheel speed direction
   switch (cmd) {
     
-    case 1:
+    case WHEEL_DRIVE_FORWARD:
       digitalWrite(inA1, HIGH);
       digitalWrite(inA2, LOW);
-      //isForward = true;
       break;
-    case 2:
+    case WHEEL_DRIVE_REVERSE:
       digitalWrite(inA1, LOW);
       digitalWrite(inA2, HIGH);
       break;
-    case 0:
+    case WHEEL_DRIVE_STOP:
       digitalWrite(inA1, HIGH);
       digitalWrite(inA2, HIGH);
-      //isStop = true;
       break;
     default:
       // Default: Stop
       digitalWrite(inA1, HIGH);
       digitalWrite(inA2, HIGH);
-      //isStop = true;
       break;
       
   }
@@ -118,7 +113,7 @@ void ctrlWheel_A(int cmd, int wheelSpeed){
   {
     isStop     = true;
     wheelSpeed = 0;
-  }
+  } 
   updateWheelStatus_A(isForward, isStop, wheelSpeed);
 }
 
@@ -129,15 +124,15 @@ void ctrlWheel_B(int cmd, int wheelSpeed){
   // Set wheel speed direction
   switch (cmd) {
     
-    case 1:
+    case WHEEL_DRIVE_FORWARD:
       digitalWrite(inB1, HIGH);
       digitalWrite(inB2, LOW);
       break;
-    case 2:
+    case WHEEL_DRIVE_REVERSE:
       digitalWrite(inB1, LOW);
       digitalWrite(inB2, HIGH);
       break;
-    case 0:
+    case WHEEL_DRIVE_STOP:
       digitalWrite(inB1, HIGH);
       digitalWrite(inB2, HIGH);
       break;
@@ -168,15 +163,15 @@ void ctrlWheel_C(int cmd, int wheelSpeed){
   // Set wheel speed direction
   switch (cmd) {
     
-    case 1:
+    case WHEEL_DRIVE_FORWARD:
       digitalWrite(inC1, HIGH);
       digitalWrite(inC2, LOW);
       break;
-    case 2:
+    case WHEEL_DRIVE_REVERSE:
       digitalWrite(inC1, LOW);
       digitalWrite(inC2, HIGH);
       break;
-    case 0:
+    case WHEEL_DRIVE_STOP:
       digitalWrite(inC1, HIGH);
       digitalWrite(inC2, HIGH);
       break;
@@ -207,15 +202,15 @@ void ctrlWheel_D(int cmd, int wheelSpeed){
   // Set wheel speed direction
   switch (cmd) {
     
-    case 1:
+    case WHEEL_DRIVE_FORWARD:
       digitalWrite(inD1, HIGH);
       digitalWrite(inD2, LOW);
       break;
-    case 2:
+    case WHEEL_DRIVE_REVERSE:
       digitalWrite(inD1, LOW);
       digitalWrite(inD2, HIGH);
       break;
-    case 0:
+    case WHEEL_DRIVE_STOP:
       digitalWrite(inD1, HIGH);
       digitalWrite(inD2, HIGH);
       break;
